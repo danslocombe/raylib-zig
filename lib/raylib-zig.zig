@@ -758,6 +758,7 @@ pub const LoadFileDataCallback = ?fn ([*c]const u8, [*c]c_uint) callconv(.C) [*c
 pub const SaveFileDataCallback = ?fn ([*c]const u8, ?*anyopaque, c_uint) callconv(.C) bool;
 pub const LoadFileTextCallback = ?fn ([*c]const u8) callconv(.C) [*c]u8;
 pub const SaveFileTextCallback = ?fn ([*c]const u8, [*c]u8) callconv(.C) bool;
+pub const AudioCallback = ?*const fn (?*anyopaque, c_uint) callconv(.C) void;
 
 pub const RAYLIB_VERSION_MAJOR = @as(c_int, 4);
 pub const RAYLIB_VERSION_MINOR = @as(c_int, 5);
