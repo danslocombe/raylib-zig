@@ -1,73 +1,117 @@
 const std = @import("std");
-const Builder = std.build.Builder;
-const rl = @import("raylib/src/build.zig");
+const Build = std.Build;
+const Compile = Build.Step.Compile;
 
-var ran_git = false;
-const srcdir = getSrcDir();
+const srcdir = "raylib/raylib/src";
 
-fn getSrcDir() []const u8 {
-    return std.fs.path.dirname(@src().file) orelse ".";
-}
+const raylib_flags = [_][]const u8{
+    "-std=gnu99",
+    "-DPLATFORM_DESKTOP",
+    "-D_GNU_SOURCE",
+    "-DGL_SILENCE_DEPRECATION=199309L",
+    "-fno-sanitize=undefined", // https://github.com/raysan5/raylib/issues/1891
+};
 
-pub fn link(builder: *Builder, exe: *std.build.CompileStep, system_lib: bool) void {
+pub fn link(b: *Build, exe: *Compile, system_lib: bool) void {
+    const mod = exe.root_module;
+    mod.link_libc = true;
+
     if (system_lib) {
-        exe.linkSystemLibrary("raylib");
-        return;
+        mod.linkSystemLibrary("raylib", .{});
     } else {
-        exe.linkLibrary(rl.addRaylib(builder, exe.target, exe.optimize));
+        addRaylib(b, mod);
     }
 
-    const target_os = exe.target.toTarget().os.tag;
+    const target = mod.resolved_target orelse b.graph.host;
+    const target_os = target.result.os.tag;
     switch (target_os) {
         .windows => {
-            exe.linkSystemLibrary("winmm");
-            exe.linkSystemLibrary("gdi32");
-            exe.linkSystemLibrary("opengl32");
+            mod.linkSystemLibrary("winmm", .{});
+            mod.linkSystemLibrary("gdi32", .{});
+            mod.linkSystemLibrary("opengl32", .{});
         },
         .macos => {
-            exe.linkFramework("OpenGL");
-            exe.linkFramework("Cocoa");
-            exe.linkFramework("IOKit");
-            exe.linkFramework("CoreAudio");
-            exe.linkFramework("CoreVideo");
+            mod.linkFramework("OpenGL", .{});
+            mod.linkFramework("Cocoa", .{});
+            mod.linkFramework("IOKit", .{});
+            mod.linkFramework("CoreAudio", .{});
+            mod.linkFramework("CoreVideo", .{});
         },
         .freebsd, .openbsd, .netbsd, .dragonfly => {
-            exe.linkSystemLibrary("GL");
-            exe.linkSystemLibrary("rt");
-            exe.linkSystemLibrary("dl");
-            exe.linkSystemLibrary("m");
-            exe.linkSystemLibrary("X11");
-            exe.linkSystemLibrary("Xrandr");
-            exe.linkSystemLibrary("Xinerama");
-            exe.linkSystemLibrary("Xi");
-            exe.linkSystemLibrary("Xxf86vm");
-            exe.linkSystemLibrary("Xcursor");
+            mod.linkSystemLibrary("GL", .{});
+            mod.linkSystemLibrary("rt", .{});
+            mod.linkSystemLibrary("dl", .{});
+            mod.linkSystemLibrary("m", .{});
+            mod.linkSystemLibrary("X11", .{});
+            mod.linkSystemLibrary("Xrandr", .{});
+            mod.linkSystemLibrary("Xinerama", .{});
+            mod.linkSystemLibrary("Xi", .{});
+            mod.linkSystemLibrary("Xxf86vm", .{});
+            mod.linkSystemLibrary("Xcursor", .{});
         },
         else => { // linux and possibly others
-            exe.linkSystemLibrary("GL");
-            exe.linkSystemLibrary("rt");
-            exe.linkSystemLibrary("dl");
-            exe.linkSystemLibrary("m");
-            exe.linkSystemLibrary("X11");
+            mod.linkSystemLibrary("GL", .{});
+            mod.linkSystemLibrary("rt", .{});
+            mod.linkSystemLibrary("dl", .{});
+            mod.linkSystemLibrary("m", .{});
+            mod.linkSystemLibrary("X11", .{});
         },
     }
 }
 
-pub fn addAsPackage(b: *Builder, name: []const u8, to: *std.build.CompileStep) void {
-    const my_module = b.createModule(.{
-        .source_file = .{ .path = srcdir ++ "/lib/raylib-zig.zig" },
-        .dependencies = &.{},
+fn addRaylib(b: *Build, mod: *Build.Module) void {
+    mod.addIncludePath(b.path(srcdir ++ "/external/glfw/include"));
+
+    mod.addCSourceFiles(.{
+        .files = &.{
+            srcdir ++ "/raudio.c",
+            srcdir ++ "/rcore.c",
+            srcdir ++ "/rmodels.c",
+            srcdir ++ "/rshapes.c",
+            srcdir ++ "/rtext.c",
+            srcdir ++ "/rtextures.c",
+            srcdir ++ "/utils.c",
+        },
+        .flags = &raylib_flags,
     });
 
-    to.addModule(name, my_module);
+    const target = mod.resolved_target orelse b.graph.host;
+    switch (target.result.os.tag) {
+        .windows => {
+            mod.addCSourceFiles(.{ .files = &.{srcdir ++ "/rglfw.c"}, .flags = &raylib_flags });
+            mod.addIncludePath(b.path(srcdir ++ "/external/glfw/deps/mingw"));
+        },
+        .macos => {
+            mod.addCSourceFiles(.{
+                .files = &.{srcdir ++ "/rglfw.c"},
+                .flags = &raylib_flags ++ [_][]const u8{"-ObjC"},
+            });
+            mod.linkFramework("Foundation", .{});
+            mod.linkFramework("CoreServices", .{});
+            mod.linkFramework("CoreGraphics", .{});
+            mod.linkFramework("AppKit", .{});
+            mod.linkFramework("IOKit", .{});
+        },
+        else => {
+            mod.addCSourceFiles(.{ .files = &.{srcdir ++ "/rglfw.c"}, .flags = &raylib_flags });
+        },
+    }
 }
+
+pub fn addAsPackage(b: *Build, name: []const u8, to: *Compile) void {
+    const my_module = b.createModule(.{
+        .root_source_file = b.path("raylib/lib/raylib-zig.zig"),
+    });
+
+    to.root_module.addImport(name, my_module);
+}
+
 pub const math = struct {
-    pub fn addAsPackage(b: *Builder, name: []const u8, to: *std.build.CompileStep) void {
+    pub fn addAsPackage(b: *Build, name: []const u8, to: *Compile) void {
         const my_module = b.createModule(.{
-            .source_file = .{ .path = srcdir ++ "/lib/raylib-zig-math.zig" },
-            .dependencies = &.{},
+            .root_source_file = b.path("raylib/lib/raylib-zig-math.zig"),
         });
 
-        to.addModule(name, my_module);
+        to.root_module.addImport(name, my_module);
     }
 };
